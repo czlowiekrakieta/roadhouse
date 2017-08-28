@@ -4,9 +4,13 @@ from keras.models import model_from_json, model_from_yaml, load_model, Model, Se
 from keras.optimizers import SGD
 
 def conv_3_dense_2_global_max_pooling(input_shape, classes):
+    """
+    :param input_shape: (length, frequency bin size, channels)
+    :return:
+    """
 
     model = Sequential()
-    model.add(Conv2D(128, activation='relu'))
+    model.add(Conv2D(128, (4, input_shape[1]), activation='relu'))
     model.add(MaxPool2D())
     model.add(Conv2D(256, activation='relu'))
     model.add(MaxPool2D())
