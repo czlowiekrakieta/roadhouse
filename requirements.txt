@@ -1,0 +1,5 @@
+spotify-api
+requests
+pydub
+numpy
+tensorflow
