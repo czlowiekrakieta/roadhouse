@@ -1,4 +1,5 @@
 from pydub import AudioSegment
+from pydub.exceptions import CouldntDecodeError
 import numpy as np
 from glob import glob
 import json
@@ -39,7 +40,13 @@ class Container(object):
             songs = sample(songs, self.number_cap)
         BuildSong = partial(Song, mapper=self._mapper)
 
-        self.bag = list(map(BuildSong, songs))
+        for i, song in enumerate(songs, 1):
+            try:
+                self.bag.append(BuildSong(song))
+                if i % cfg.BUILDER_DISPLAY == 0:
+                    print('%s songs so far' % i)
+            except CouldntDecodeError:
+                print('song nr %s failed to decode' % i)
 
     def build_trainable_dataset(self, target_label='artist'):
 
@@ -51,7 +58,6 @@ class Container(object):
         except AttributeError:
             print('possible attributes are: "artist", '
                   '"artist_genre", "album", "album_genre"')
-            exit(0)
 
         def assign_number(label):
             if label not in labels_map:

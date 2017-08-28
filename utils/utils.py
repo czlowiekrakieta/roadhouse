@@ -29,3 +29,18 @@ def read_json(fname):
     with open(fname, 'r') as f:
         x = json.load(f)
     return x
+
+
+def parse_architecture(fname, type):
+    """
+
+    :param type: 'generator', 'classifier'
+    :return:
+    """
+    pass
+
+def _parse_generator(fname):
+    pass
+
+def _parse_classfier(fname):
+    pass

@@ -8,3 +8,4 @@ SAVES_DIFF = 100
 DOWNLOAD_DISPLAY_PROGRESS = 1000
 DUMP_FOLDER = '/media/lukasz/ML_DATA/remixer_music'
 MAPPINGS = '/home/lukasz/Documents/roadhouse/mappings'
+BUILDER_DISPLAY = 100
