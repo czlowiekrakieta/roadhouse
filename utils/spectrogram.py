@@ -64,3 +64,35 @@ def logscale_spec(spec, sr=44100, factor=20.):
             freqs += [np.mean(allfreqs[scale[i]:scale[i + 1]])]
 
     return newspec, freqs
+
+
+def build_spectrograms(song_array,
+                       crops_per_song=4,
+                       channels=0,
+                       binsize=2 ** 10,
+                       frames_nr=600):
+    def _build_single_spectr(signal):
+        s = stft(signal, frameSize=binsize)
+        sshow, freq = logscale_spec(s, factor=1.0, sr=44100)
+        ims = 20. * np.log10(np.abs(sshow) / 10e-6)
+
+        return ims
+
+    def _get_crops(freq):
+
+        low, high = 0, freq.shape[0] - frames_nr
+        st = np.random.randint(low=low, high=high, size=crops_per_song).flatten().tolist()
+        return np.stack([freq[st[i]:st[i] + frames_nr] for i in range(crops_per_song)], axis=0)
+
+    if channels == 2:
+
+        channel_one = _build_single_spectr(song_array[:, 0])
+        channel_two = _build_single_spectr(song_array[:, 1])
+
+        return np.concatenate((_get_crops(channel_one), _get_crops(channel_two)), axis=0)/300.
+
+    else:
+
+        return _get_crops(
+            _build_single_spectr(song_array[:, channels])
+        )/300.

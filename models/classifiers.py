@@ -1,27 +1,39 @@
-from keras.layers import Conv2D, Dense, MaxPool2D, BatchNormalization, \
-    Dropout, GlobalAveragePooling2D, GlobalMaxPool2D, concatenate
-from keras.models import model_from_json, model_from_yaml, load_model, Model, Sequential
-from keras.optimizers import SGD
-
-def conv_3_dense_2_global_max_pooling(input_shape, classes):
-    """
-    :param input_shape: (length, frequency bin size, channels)
-    :return:
-    """
-
-    model = Sequential()
-    model.add(Conv2D(128, (4, input_shape[1]), activation='relu'))
-    model.add(MaxPool2D())
-    model.add(Conv2D(256, activation='relu'))
-    model.add(MaxPool2D())
-    model.add(Conv2D(256, activation='relu'))
-    model.add(MaxPool2D())
-    model.add(GlobalMaxPool2D())
-    model.add(Dense(1024, activation='relu'))
-    model.add(Dense(1024, activation='relu'))
-    model.add(Dense(classes, activation='sigmoid'))
+import tensorflow as tf
+from tensorflow.python.layers.convolutional import conv1d
+from tensorflow.python.layers.pooling import max_pooling1d, average_pooling1d
+from tensorflow.python.layers.core import dense
+from roadhouse.models.general import global_avg_pooling, global_max_pooling, global_norm_pooling
 
 
-def custom_classifier(architecture):
+def benanne_like_net(init_placeholder, num_classes):
 
-    pass
+    net = conv1d(init_placeholder,
+                 filters=256,
+                 kernel_size=4,
+                 activation=tf.nn.relu)
+    net = max_pooling1d(net,
+                        pool_size=4,
+                        strides=1)
+    net = conv1d(net,
+                 filters=512,
+                 kernel_size=2,
+                 activation=tf.nn.relu)
+    net = max_pooling1d(net,
+                        pool_size=2,
+                        strides=1)
+    net = conv1d(net,
+                 filters=512,
+                 kernel_size=2,
+                 activation=tf.nn.relu)
+    net = max_pooling1d(net,
+                        pool_size=2,
+                        strides=1)
+    net = tf.concat(
+        [global_norm_pooling(net), global_max_pooling(net), global_avg_pooling(net)],
+        axis=1
+    )
+    net = dense(net, 1024, activation=tf.nn.relu)
+    net = dense(net, 1024, activation=tf.nn.relu)
+    net = dense(net, num_classes, activation=tf.nn.sigmoid)
+
+    return net
