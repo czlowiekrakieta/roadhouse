@@ -6,7 +6,7 @@ from glob import glob
 from random import sample
 from pydub import AudioSegment
 import os
-from functools import partial
+from functools import partial, reduce
 from pydub.exceptions import CouldntDecodeError
 
 from roadhouse.utils import config as cfg
@@ -18,7 +18,11 @@ import json
 
 
 class Container(object):
-    def __init__(self, number_cap=None, read_on_init=False, target_label='artist'):
+    def __init__(self,
+                 number_cap=None,
+                 read_on_init=False,
+                 target_label='artist',
+                 truncate_classes=True):
 
         self.artist_to_genre = read_json('artist_genres.json')
         self.album_to_genre = read_json('album_genres.json')
@@ -28,6 +32,7 @@ class Container(object):
         self.bag = []
         self.number_cap = number_cap
         self.target_label = target_label
+        self.truncate_classes = truncate_classes and target_label.endswith('genre')
 
         if target_label not in ['artist', 'artist_genre', 'album_genre', 'album']:
             raise ValueError
@@ -80,12 +85,17 @@ class Container(object):
             labels = []
 
             if isinstance(label, list):
+                label = [label]
 
-                for x in label:
-                    lab = assign_number(x)
-                    labels.append(lab)
-            else:
-                labels = [assign_number(label)]
+            if self.truncate_classes:
+                label = set(reduce(lambda x, y: x+y,
+                                 [[x for x in cfg.GENRES if x in y]
+                                  for y in label]))
+
+            for x in label:
+                lab = assign_number(x)
+                labels.append(lab)
+
 
             X.append(array)
             y.append(labels)
@@ -137,17 +147,33 @@ def read_json(fname):
     return x
 
 
+def data_generator(path, batch_size):
+    for file in glob(os.path.join(path, 'data_*.pkl')):
+        with open(file, 'rb') as f:
+            X, y, label_map = pickle.load(f)
+
+        offset = 0
+        while offset < X.shape[0]:
+            offset += batch_size
+            yield X[offset - batch_size:offset], y[offset - batch_size:offset]
+
+
 def fetch_data(args):
 
     path = os.path.join(cfg.SPECTROGRAMS_PICKLE_STORAGE,
-                        args.spectro_pickle + str(args.data_pts_nr) + '.pkl')
-    if os.path.exists(path):
-        with open(path, 'rb') as f:
-            X, y, label_map = pickle.load(f)
-            return X, y, label_map
+                        args.spectro_pickle + str(args.data_pts_nr))
+    if os.path.exists(path) and len(glob(os.path.join(path, 'data_*.pkl'))):
+        print('loading pre-created data')
+        with open(os.path.join(path, 'meta.json'), 'r') as f:
+            meta = json.load(f)
+
+        return partial(data_generator, path=path, batch_size=args.batch_size), \
+               meta['label_map'], meta['shape']
+
     else:
-        if not os.path.exists(cfg.SPECTROGRAMS_PICKLE_STORAGE):
-            os.mkdir(cfg.SPECTROGRAMS_PICKLE_STORAGE)
+        print('creating data')
+        if not os.path.exists(path):
+            os.makedirs(path)
 
         cont = Container(number_cap=args.data_pts_nr,
                          read_on_init=True,
@@ -158,19 +184,35 @@ def fetch_data(args):
                                 crops_per_song=args.crops,
                                 frames_nr=args.frames_nr).shape[-1] # can't calculate it by hand yet
         multiplier = (1 if args.channels < 2 else 2)*args.crops
-        x_spectr = np.random.randn(len(X)*multiplier,
-                                   args.frames_nr,
-                                   sh)
-        y_spectr = []
-        for i in range(len(X)):
-            x_spectr[i*multiplier:(i+1)*multiplier] = build_spectrograms(X[i],
-                                                                         channels=args.channels,
-                                                                         crops_per_song=args.crops,
-                                                                         frames_nr=args.frames_nr)
-            y_spectr.extend(y[i] for i in range(multiplier))
 
-        y_spectr = np.asarray(y_spectr)
-        with open(path, 'wb') as f:
-            pickle.dump((x_spectr, y_spectr, label_map), f)
 
-        return x_spectr, y_spectr, label_map
+        offset = 0
+        with open(os.path.join(path, 'meta.json'), 'w') as f:
+            json.dump({'label_map': label_map, 'shape': sh}, f)
+
+        while offset < len(X):
+
+            x_spectr = np.random.randn(args.max_pickle_size * multiplier,
+                                       args.frames_nr,
+                                       sh)
+            y_spectr = []
+
+            for i in range(args.max_pickle_size):
+                x_spectr[i * multiplier:(i + 1) * multiplier] = build_spectrograms(X[offset+i],
+                                                                                   crops_per_song=args.crops,
+                                                                                   channels=args.channels,
+                                                                                   frames_nr=args.frames_nr)
+                y_spectr.extend(y[i] for i in range(multiplier))
+
+            y_spectr = np.asarray(y_spectr)
+            perm = np.random.permutation(x_spectr.shape[0])
+            x_spectr = x_spectr[perm]
+            y_spectr = y_spectr[perm]
+
+            with open(os.path.join(path, 'data_{}.pkl'.format(offset)), 'wb') as f:
+                pickle.dump((x_spectr, y_spectr, label_map), f)
+
+            offset += args.max_pickle_size
+
+
+        return partial(data_generator, path=path, batch_size=args.batch_size), label_map, sh

@@ -12,3 +12,10 @@ BUILDER_DISPLAY = 50
 SPECTROGRAMS_PICKLE_STORAGE = '/media/lukasz/ML_DATA/roadhouse_spectrograms'
 TRAINING_DISPLAY = 10
 EPS = 1e-4
+GENRES = [
+    'rock', 'pop', 'electro', 'latin', 'funk', 'folk',
+    'christian', 'hip hop', 'rap', 'techno', 'house', 'dubstep',
+    'punk', 'country', 'dance', 'metal', 'r&b', 'blues', 'soul' ,
+    'african', 'rave', 'disco', 'piano', 'reggae', 'stoner',
+    'trance', 'tropical', 'soft', 'grunge'
+]

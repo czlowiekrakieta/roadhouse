@@ -39,26 +39,21 @@ def build_simple_adam(loss):
     return opt
 
 
-def train_classification(optimizer, loss, X, y, x_ph, y_ph,
-                         session=None, epochs=100, batch_size=32,
+def train_classification(optimizer, loss, x_ph, y_ph, X=None, y=None,
+                         session=None, epochs=100, batch_size=32, data_generator=None,
                          val_data=None):
     if session is None:
         session = tf.InteractiveSession()
 
+    assert (data_generator is not None)^(X is not None
+                                         and y is not None)
+
     session.run(tf.global_variables_initializer())
 
-    m, s = X.mean(), X.std()
-    s += cfg.EPS
-
-    print('samples shape: ', X.shape)
-    print('labels shape: ', y.shape)
-    print('steps per epoch: ', X.shape[0] // batch_size + 1)
-    print('normalizing data with params: %s %s' % (m, s))
-
-    X = (X-m)/s
-
-    if val_data is not None:
-        val_data[0] = (val_data[0] - m)/s
+    if X is not None:
+        print('samples shape: ', X.shape)
+        print('labels shape: ', y.shape)
+        print('steps per epoch: ', X.shape[0] // batch_size + 1)
 
     losses = []
     val_losses = []
@@ -72,13 +67,13 @@ def train_classification(optimizer, loss, X, y, x_ph, y_ph,
         else:
             return session.run(fetches=loss, feed_dict=feeder)
 
+    losses = []
     for e in range(epochs):
 
         epoch_losses = []
-        for b in range(X.shape[0] // batch_size + 1):
 
-            idx = np.s_[sample(range(X.shape[0]), batch_size)]
-            L = evaluate_single_batch(X[idx], y[idx], True)
+        for b, (x, y) in enumerate(data_generator()):
+            L = evaluate_single_batch(x, y, True)
             epoch_losses.append(L)
 
             if b % cfg.TRAINING_DISPLAY == 0:
@@ -86,18 +81,3 @@ def train_classification(optimizer, loss, X, y, x_ph, y_ph,
                 print('moving avg: ', np.mean(epoch_losses[-10:]))
 
         losses.append(epoch_losses)
-
-        if val_data is not None:
-            if val_data[0].shape[0] > batch_size * 4:
-                vl = []
-                for b in range(val_data[0].shape[0] // batch_size + 1):
-                    idx = np.s_[batch_size*b:batch_size*(b+1)]
-                    l = evaluate_single_batch(X[idx], y[idx])
-                    vl.append(l)
-                vl = sum(vl) / len(vl)
-            else:
-                vl = evaluate_single_batch(*val_data)
-
-            val_losses.append(vl)
-
-    session.close()
