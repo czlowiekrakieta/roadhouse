@@ -8,6 +8,7 @@ from pydub import AudioSegment
 import os
 from functools import partial, reduce
 from pydub.exceptions import CouldntDecodeError
+from scipy.io import wavfile
 
 from roadhouse.utils import config as cfg
 from roadhouse.utils.spectrogram import build_spectrograms
@@ -15,6 +16,22 @@ from roadhouse.utils.spectrogram import build_spectrograms
 from time import sleep
 import os.path as op
 import json
+
+import sys
+
+
+class Logger(object):
+
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log = open(filename, 'a')
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+
+    def flush(self):
+        pass
 
 
 class Container(object):
@@ -50,13 +67,20 @@ class Container(object):
 
         return artist, album, genre_artist, genre_album
 
-    def _read_files_and_get_data(self):
-        songs = glob(op.join(cfg.DUMP_FOLDER, 'part_*', '*'))
-        if self.number_cap is not None and len(songs) > self.number_cap:
-            songs = sample(songs, self.number_cap)
-        BuildSong = partial(Song, mapper=self._mapper)
+    def clear(self):
+        self.bag = []
+
+    def _build_dataset(self):
+        self.songs = glob(op.join(cfg.DUMP_FOLDER, 'part_*', '*'))
+        if self.number_cap is not None and len(self.songs) > self.number_cap:
+            self.songs = sample(self.songs, self.number_cap)
         print('beginning loading')
-        for i, song in enumerate(songs, 1):
+        self._last_song_dumped = 0
+
+    def _read_files_and_get_data(self, start, stop):
+        self._build_dataset()
+        BuildSong = partial(Song, mapper=self._mapper)
+        for i, song in enumerate(self.songs[start:stop], 1):
             try:
                 self.bag.append(BuildSong(song))
                 if i % cfg.BUILDER_DISPLAY == 0:
@@ -66,16 +90,7 @@ class Container(object):
 
     def build_trainable_dataset(self):
 
-        labels_map = {}
         X, y = [], []
-
-        def assign_number(label):
-            if label not in labels_map:
-                curr = len(labels_map)
-                labels_map[label] = curr
-                return curr
-            else:
-                return labels_map[label]
 
         for song in self.bag:
 
@@ -91,16 +106,12 @@ class Container(object):
                 label = set(reduce(lambda x, y: x+y,
                                  [[x for x in cfg.GENRES if x in y]
                                   for y in label]))
-
-            for x in label:
-                lab = assign_number(x)
-                labels.append(lab)
-
+                label = list(label)
 
             X.append(array)
-            y.append(labels)
+            y.append(label)
 
-        return X, y, labels_map
+        return X, y
 
 
 class Song(object):
@@ -147,10 +158,12 @@ def read_json(fname):
     return x
 
 
-def data_generator(path, batch_size):
-    for file in glob(os.path.join(path, 'data_*.pkl')):
+def data_generator(path, batch_size, val_data):
+    fs = glob(os.path.join(path, 'data_*.pkl'))
+    fs.remove(val_data)
+    for file in fs:
         with open(file, 'rb') as f:
-            X, y, label_map = pickle.load(f)
+            X, y = pickle.load(f)
 
         offset = 0
         while offset < X.shape[0]:
@@ -167,52 +180,87 @@ def fetch_data(args):
         with open(os.path.join(path, 'meta.json'), 'r') as f:
             meta = json.load(f)
 
-        return partial(data_generator, path=path, batch_size=args.batch_size), \
-               meta['label_map'], meta['shape']
+        return partial(data_generator, path=path, batch_size=args.batch_size, val_data=meta['val']), \
+               meta['label_map'], meta['shape'], meta['val']
 
     else:
-        print('creating data')
+        print('creating data in chunks of {}'.format(
+            args.data_pts_nr // args.steps
+        ))
         if not os.path.exists(path):
             os.makedirs(path)
 
         cont = Container(number_cap=args.data_pts_nr,
-                         read_on_init=True,
+                         read_on_init=False,
                          target_label=args.target_label)
-        X, y, label_map = cont.build_trainable_dataset()
-        sh = build_spectrograms(X[0],
-                                channels=args.channels,
-                                crops_per_song=args.crops,
-                                frames_nr=args.frames_nr).shape[-1] # can't calculate it by hand yet
-        multiplier = (1 if args.channels < 2 else 2)*args.crops
 
+        start = 0
+        val_data = ''
+        label_map = {}
 
-        offset = 0
-        with open(os.path.join(path, 'meta.json'), 'w') as f:
-            json.dump({'label_map': label_map, 'shape': sh}, f)
+        for step in range(args.steps):
 
-        while offset < len(X):
+            stop = start + args.data_pts_nr // args.steps
 
-            x_spectr = np.random.randn(args.max_pickle_size * multiplier,
-                                       args.frames_nr,
-                                       sh)
+            cont._read_files_and_get_data(start=start, stop=stop)
+
+            X, y = cont.build_trainable_dataset()
+            sh = build_spectrograms(X[0],
+                                    channels=args.channels,
+                                    crops_per_song=args.crops,
+                                    frames_nr=args.frames_nr).shape[-1] # can't calculate it by hand yet
+            multiplier = (1 if args.channels < 2 else 2)*args.crops
+
+            print('read data, about to pickle spectrograms')
+            offset = 0
+
+            x_spectr = []
             y_spectr = []
 
-            for i in range(args.max_pickle_size):
-                x_spectr[i * multiplier:(i + 1) * multiplier] = build_spectrograms(X[offset+i],
-                                                                                   crops_per_song=args.crops,
-                                                                                   channels=args.channels,
-                                                                                   frames_nr=args.frames_nr)
-                y_spectr.extend(y[i] for i in range(multiplier))
+            for i in range(args.data_pts_nr // args.steps):
 
+                for lab in y[i]:
+                    if lab not in label_map:
+                        label_map[lab] = len(label_map)
+
+                y_labs_nr = [label_map[l] for l in y[i]]
+
+                new_spectrogram = build_spectrograms(X[i],
+                                                   crops_per_song=args.crops,
+                                                   channels=args.channels,
+                                                   frames_nr=args.frames_nr)
+                if new_spectrogram is None:
+                    continue
+
+                x_spectr.append(new_spectrogram)
+                y_spectr.extend([y_labs_nr]*new_spectrogram.shape[0])
+
+            print('to concat x_spectr')
+            x_spectr = np.concatenate(x_spectr, axis=0)
+            print('concatened x_spectr')
             y_spectr = np.asarray(y_spectr)
+            print(x_spectr.shape, y_spectr.shape)
             perm = np.random.permutation(x_spectr.shape[0])
             x_spectr = x_spectr[perm]
             y_spectr = y_spectr[perm]
-
-            with open(os.path.join(path, 'data_{}.pkl'.format(offset)), 'wb') as f:
-                pickle.dump((x_spectr, y_spectr, label_map), f)
-
-            offset += args.max_pickle_size
+            filename = os.path.join(path, 'data_{}.pkl'.format(step))
+            with open(filename, 'wb') as f:
+                pickle.dump((x_spectr, y_spectr), f)
 
 
-        return partial(data_generator, path=path, batch_size=args.batch_size), label_map, sh
+            start = stop
+            cont.clear()
+
+            val_data = filename
+
+            with open(os.path.join(path, 'meta.json'), 'w') as f:
+                json.dump({'label_map': label_map, 'shape': sh, 'val': val_data}, f)
+
+        return partial(data_generator, path=path, batch_size=args.batch_size, val_data=val_data), \
+               label_map, sh, val_data
+
+
+def save_song(fname, data):
+
+    scaled = np.int16((data-data.min()/(data.max()-data.min())*2 - 1 )*32767)
+    wavfile.write(fname, 44100, scaled)

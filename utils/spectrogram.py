@@ -75,24 +75,32 @@ def build_spectrograms(song_array,
         s = stft(signal, frameSize=binsize)
         sshow, freq = logscale_spec(s, factor=1.0, sr=44100)
         ims = 20. * np.log10(np.abs(sshow) / 10e-6)
-
         return ims
 
     def _get_crops(freq):
 
         low, high = 0, freq.shape[0] - frames_nr
+        if low >= high:
+            return None
         st = np.random.randint(low=low, high=high, size=crops_per_song).flatten().tolist()
-        return np.stack([freq[st[i]:st[i] + frames_nr] for i in range(crops_per_song)], axis=0)
+        return np.stack([freq[st[i]:st[i] + frames_nr] for i in range(crops_per_song)], axis=0)/300.
 
     if channels == 2:
 
         channel_one = _build_single_spectr(song_array[:, 0])
         channel_two = _build_single_spectr(song_array[:, 1])
-
-        return np.concatenate((_get_crops(channel_one), _get_crops(channel_two)), axis=0)/300.
+        channel_one = _get_crops(channel_one)
+        channel_two = _get_crops(channel_two)
+        not_nones = [channel_two is not None, channel_one is not None]
+        if all(not_nones):
+            return np.concatenate((channel_one, channel_two), axis=0)
+        elif any(not_nones):
+            return [channel_two, channel_one][not_nones.index(True)]
+        else:
+            return None
 
     else:
 
         return _get_crops(
             _build_single_spectr(song_array[:, channels])
-        )/300.
+        )
